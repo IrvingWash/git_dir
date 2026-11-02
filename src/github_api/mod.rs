@@ -1,38 +1,55 @@
+pub mod objects;
+
 use url::Url;
 
-const GITHUB_DOMAIN: &str = "github.com";
+const DOMAIN: &str = "github.com";
 const BASE_URL: &str = "https://api.github.com";
 
-pub struct GithubApiClient {
+pub struct ApiClient {
     client: reqwest::blocking::Client,
 }
 
-impl GithubApiClient {
+impl ApiClient {
     pub fn new() -> Result<Self, String> {
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(reqwest::header::USER_AGENT, reqwest::header::HeaderValue::from_static("git_dir"));
-        headers.insert("X-GitHub-Api-Version", reqwest::header::HeaderValue::from_static("2026-03-10"));
-        headers.insert(reqwest::header::ACCEPT, reqwest::header::HeaderValue::from_static("application/json"));
+        headers.insert(
+            reqwest::header::USER_AGENT,
+            reqwest::header::HeaderValue::from_static("git_dir"),
+        );
+        headers.insert(
+            "X-GitHub-Api-Version",
+            reqwest::header::HeaderValue::from_static("2026-03-10"),
+        );
+        headers.insert(
+            reqwest::header::ACCEPT,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
 
         let client = reqwest::blocking::Client::builder()
-                .default_headers(headers)
-                .build()
-                .map_err(|err| err.to_string())?;
+            .default_headers(headers)
+            .build()
+            .map_err(|err| err.to_string())?;
 
-        return Ok(Self {
-            client,
-        });
+        return Ok(Self { client });
     }
 
-    pub fn get_repository_content_from_url(&self, url: &str) -> Result<(), String> {
-        let deconstructed_url = GithubDeconstructedUrl::new(url)?;
+    pub fn get_repository_content_from_url(
+        &self,
+        url: &str,
+    ) -> Result<objects::RepositoryContent, String> {
+        let deconstructed_url = DeconstructedUrl::new(url)?;
 
         if let (Some(owner), Some(repo), Some(in_repo_path)) = (
             &deconstructed_url.owner,
             &deconstructed_url.repo,
             &deconstructed_url.in_repo_path,
         ) {
-            return self.get_repository_content(owner, repo, in_repo_path, deconstructed_url.branch.as_deref());
+            return self.get_repository_content(
+                owner,
+                repo,
+                in_repo_path,
+                deconstructed_url.branch.as_deref(),
+            );
         }
 
         return Err(format!(
@@ -47,7 +64,7 @@ impl GithubApiClient {
         repo: &str,
         in_repo_path: &str,
         branch: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<objects::RepositoryContent, String> {
         let mut url =
             Url::parse(format!("{BASE_URL}/repos/{owner}/{repo}/contents/{in_repo_path}").as_str())
                 .map_err(|err| err.to_string())?;
@@ -55,33 +72,37 @@ impl GithubApiClient {
             url.set_query(Some(format!("ref={branch}").as_str()));
         }
 
-        let result = self.client
+        let result = self
+            .client
             .get(url)
-            .send().map_err(|err| err.to_string())?
+            .send()
+            .map_err(|err| err.to_string())?
             .error_for_status()
             .map_err(|err| err.to_string())?;
 
         let json = result.text().map_err(|err| err.to_string())?;
+        let repository_content: objects::RepositoryContent =
+            serde_json::from_str(json.as_str()).map_err(|err| err.to_string())?;
 
-        return Ok(());
+        return Ok(repository_content);
     }
 }
 
-struct GithubDeconstructedUrl {
+struct DeconstructedUrl {
     owner: Option<String>,
     repo: Option<String>,
     branch: Option<String>,
     in_repo_path: Option<String>,
 }
 
-impl GithubDeconstructedUrl {
+impl DeconstructedUrl {
     pub fn new(url: &str) -> Result<Self, String> {
         let url =
             Url::parse(url).map_err(|err| format!("Failed to parse the url {}: {}", url, err))?;
 
         let is_github_url = match url.host() {
             None => false,
-            Some(host) => host == url::Host::Domain(GITHUB_DOMAIN),
+            Some(host) => host == url::Host::Domain(DOMAIN),
         };
 
         if !is_github_url {
@@ -93,7 +114,7 @@ impl GithubDeconstructedUrl {
             .map(|char| char.collect::<Vec<_>>())
             .ok_or(format!("Couldn't divide url {} into segments", url))?;
 
-        let deconstructed = GithubDeconstructedUrl {
+        let deconstructed = DeconstructedUrl {
             // This sucks, but idk
             owner: url_segments.get(0).map(|segment| segment.to_string()),
             repo: url_segments.get(1).map(|segment| segment.to_string()),

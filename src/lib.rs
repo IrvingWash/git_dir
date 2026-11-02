@@ -1,29 +1,34 @@
 mod github_api;
 
-use github_api::GithubApiClient;
-
-pub fn get_repo_contents_from_url(url: &str) -> Result<(), String> {
-    let github_client = GithubApiClient::new()?;
-
-    github_client.get_repository_content_from_url(url)?;
-
-    return Ok(());
+#[derive(Debug, Default)]
+pub struct DownloadFolderResult {
+    warnings: Vec<String>,
 }
 
-pub fn get_repo_contents(
-    owner: &str,
-    repo: &str,
-    in_repo_path: &str,
-    branch: Option<&str>,
-) -> Result<(), String> {
-    let github_client = GithubApiClient::new()?;
+pub fn download_folder_from_repo_url(url: &str) -> Result<DownloadFolderResult, String> {
+    let mut result = DownloadFolderResult::default();
 
-    github_client.get_repository_content(
-        owner,
-        repo,
-        in_repo_path,
-        branch,
-    )?;
+    let github_client = github_api::ApiClient::new()?;
 
-    return Ok(());
+    let repo_content = github_client.get_repository_content_from_url(url)?;
+
+    for content in repo_content {
+        use github_api::objects::RepositoryContentKind;
+        match content {
+            RepositoryContentKind::Symlink(content) => {
+                result
+                    .warnings
+                    .push(format!("Skipping symlink: {}", content.name));
+            }
+            RepositoryContentKind::Submodule(submodule) => {
+                result
+                    .warnings
+                    .push(format!("Skipping submodule: {}", submodule.name));
+            }
+            RepositoryContentKind::Directory(_) => {}
+            RepositoryContentKind::File(_) => {}
+        }
+    }
+
+    return Ok(result);
 }
