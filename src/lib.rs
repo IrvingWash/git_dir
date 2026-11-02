@@ -1,6 +1,12 @@
 mod github_api;
 
-use std::fs;
+use std::{
+    fs::{self, File},
+    path::PathBuf,
+};
+
+use walkdir::WalkDir;
+use zip::write::ZipWriter;
 
 // RepositoryContentDirectory {
 //     size: 0,
@@ -22,55 +28,18 @@ use std::fs;
 //         _self: "https://api.github.com/repos/KhronosGroup/glTF-Sample-Assets/contents/Models/Fox/glTF-Binary?ref=main",
 //     },
 // }
-// RepositoryContentDirectory {
-//     size: 0,
-//     name: "glTF",
-//     path: "Models/Fox/glTF",
-//     content: None,
-//     sha: "fdca4052bab994c22d14a0d443cf20ee3cd85557",
-//     url: "https://api.github.com/repos/KhronosGroup/glTF-Sample-Assets/contents/Models/Fox/glTF?ref=main",
-//     git_url: "https://api.github.com/repos/KhronosGroup/glTF-Sample-Assets/git/trees/fdca4052bab994c22d14a0d443cf20ee3cd85557",
-//     html_url: "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Fox/glTF",
-//     download_url: None,
-//     _links: RepositoryContentLinks {
-//         git: Some(
-//             "https://api.github.com/repos/KhronosGroup/glTF-Sample-Assets/git/trees/fdca4052bab994c22d14a0d443cf20ee3cd85557",
-//         ),
-//         html: Some(
-//             "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Fox/glTF",
-//         ),
-//         _self: "https://api.github.com/repos/KhronosGroup/glTF-Sample-Assets/contents/Models/Fox/glTF?ref=main",
-//     },
-// }
-// RepositoryContentDirectory {
-//     size: 0,
-//     name: "screenshot",
-//     path: "Models/Fox/screenshot",
-//     content: None,
-//     sha: "7b039bc65d7b62cdf53b88ebac93fae3b24424e0",
-//     url: "https://api.github.com/repos/KhronosGroup/glTF-Sample-Assets/contents/Models/Fox/screenshot?ref=main",
-//     git_url: "https://api.github.com/repos/KhronosGroup/glTF-Sample-Assets/git/trees/7b039bc65d7b62cdf53b88ebac93fae3b24424e0",
-//     html_url: "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Fox/screenshot",
-//     download_url: None,
-//     _links: RepositoryContentLinks {
-//         git: Some(
-//             "https://api.github.com/repos/KhronosGroup/glTF-Sample-Assets/git/trees/7b039bc65d7b62cdf53b88ebac93fae3b24424e0",
-//         ),
-//         html: Some(
-//             "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Fox/screenshot",
-//         ),
-//         _self: "https://api.github.com/repos/KhronosGroup/glTF-Sample-Assets/contents/Models/Fox/screenshot?ref=main",
-//     },
-// }
 
 #[derive(Debug, Default)]
 pub struct DownloadFolderResult {
     pub warnings: Vec<String>,
-    pub destination: String,
+    pub destination: PathBuf,
     pub archive_name: String,
 }
 
-pub fn download_folder_from_github_repo_url(url: &str, dst: &str) -> Result<DownloadFolderResult, String> {
+pub fn download_folder_from_github_repo_url(
+    url: &str,
+    dst: &str,
+) -> Result<DownloadFolderResult, String> {
     let github_client = github_api::ApiClient::new()?;
 
     let repo_content = github_client.get_repository_content_from_url(url)?;
@@ -79,35 +48,36 @@ pub fn download_folder_from_github_repo_url(url: &str, dst: &str) -> Result<Down
         .ok_or("Failed to get OS info on your home directory")?;
 
     if !project_dirs.cache_dir().exists() {
-        fs::create_dir(project_dirs.cache_dir())
-            .map_err(|err| format!(
+        fs::create_dir(project_dirs.cache_dir()).map_err(|err| {
+            format!(
                 "Failed to create cache dir ({:?}): {}",
                 project_dirs.cache_dir(),
                 err.to_string(),
-            ))?;
+            )
+        })?;
     }
 
     let output_name = format!(
         "{}-{}-{}",
-        repo_content.owner,
-        repo_content.repo,
-        repo_content.in_repo_path,
-    ).replace("/", "_").replace("\\", "_");
+        repo_content.owner, repo_content.repo, repo_content.in_repo_path,
+    )
+    .replace("/", "_")
+    .replace("\\", "_");
 
-    let mut output_path = project_dirs.cache_dir().to_path_buf();
-    output_path.push(&output_name);
+    let mut root_output_path = project_dirs.cache_dir().to_path_buf();
+    root_output_path.push(&output_name);
 
-    fs::create_dir(&output_path).map_err(
-        |e| format!(
+    fs::create_dir(&root_output_path).map_err(|e| {
+        format!(
             "Failed to create cache output subdir ({:?}): {}",
-            output_path,
+            root_output_path,
             e.to_string(),
-        ),
-    )?;
+        )
+    })?;
 
     let mut result = DownloadFolderResult {
         warnings: Vec::new(),
-        destination: dst.to_owned(),
+        destination: PathBuf::from(dst),
         archive_name: format!("{}.zip", output_name),
     };
 
@@ -127,34 +97,102 @@ pub fn download_folder_from_github_repo_url(url: &str, dst: &str) -> Result<Down
             RepositoryContentKind::Directory(dir) => {
                 println!("{:#?}", dir);
             }
-            RepositoryContentKind::File(file) => {
-                match file.download_url {
-                    None => result.warnings.push(format!("File {} doesn't have download url", file.path)),
-                    Some(download_url) => {
-                        let download_result = reqwest::blocking::get(download_url);
-                        match download_result {
-                            Err(e) => result.warnings.push(format!("Failed to download file {}: {}", file.path, e.to_string())),
-                            Ok(dr) => {
-                                let mut file_path = output_path.to_path_buf();
-                                file_path.push(file.name.clone());
-                                fs::write(file_path, dr.text().map_err(
-                                    |e| format!("Contents of file {} seem to be corrupted {}", file.name, e),
-                                )?).map_err(|e| format!("Failed to create file {}: {}", file.name, e))?;
-                            },
+            RepositoryContentKind::File(file) => match file.download_url {
+                None => result
+                    .warnings
+                    .push(format!("File {} doesn't have download url", file.path)),
+                Some(download_url) => {
+                    let download_result = reqwest::blocking::get(download_url);
+                    match download_result {
+                        Err(e) => result.warnings.push(format!(
+                            "Failed to download file {}: {}",
+                            file.path,
+                            e.to_string()
+                        )),
+                        Ok(dr) => {
+                            let mut file_path = root_output_path.to_path_buf();
+                            file_path.push(file.name.clone());
+                            match dr.text() {
+                                Err(e) => result.warnings.push(format!(
+                                    "Downloaded corrupted file {}: {}",
+                                    file.name, e
+                                )),
+                                Ok(text) => fs::write(file_path, text).map_err(|e| {
+                                    format!("Failed to create file {}: {}", file.name, e,)
+                                })?,
+                            }
                         }
                     }
                 }
-            }
+            },
         }
     }
 
-    fs::remove_dir_all(&output_path).map_err(
-        |err| format!(
+    let mut zip_file_path = result.destination.to_path_buf();
+    zip_file_path.push(&result.archive_name);
+    let zip_file = File::create(&zip_file_path)
+        .map_err(|e| format!("Failed to create zip file ({:?}): {}", zip_file_path, e,))?;
+    let mut zip_writer = ZipWriter::new(zip_file);
+    let zip_options = zip::write::SimpleFileOptions::default();
+
+    let walk_dir = WalkDir::new(&root_output_path);
+    for entry_result in walk_dir.into_iter() {
+        let entry = match entry_result {
+            Ok(entry) => entry,
+            Err(e) => {
+                return Err(
+                    format!("Error while traversing directory {root_output_path:?}: {e}").into(),
+                );
+            }
+        };
+        let path = entry.path();
+        let path_stripped = path
+            .strip_prefix(&root_output_path)
+            .map_err(|e| e.to_string())?;
+        let path_as_string = path_stripped
+            .to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("{:?} is a Non UTF-8 Path", path_stripped.display()))?;
+
+        // Write file or directory explicitly
+        // Some unzip tools unzip files with directory paths correctly, some do not!
+        if path.is_file() {
+            println!(
+                "adding file {:?} as {:?} ...",
+                path.display(),
+                path_stripped.display()
+            );
+            zip_writer
+                .start_file(path_as_string, zip_options)
+                .map_err(|e| e.to_string())?;
+            let mut f = File::open(path).map_err(|e| e.to_string())?;
+
+            std::io::copy(&mut f, &mut zip_writer).map_err(|e| e.to_string())?;
+        } else if !path_stripped.as_os_str().is_empty() {
+            // Only if not root! Avoids path spec / warning
+            // and mapname conversion failed error on unzip
+            println!(
+                "adding dir '{}' as '{}' ...",
+                path.display(),
+                path_stripped.display()
+            );
+            zip_writer
+                .add_directory(path_as_string, zip_options)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    zip_writer
+        .finish()
+        .map_err(|e| format!("Filed to create zip file: {}", e))?;
+
+    fs::remove_dir_all(&root_output_path).map_err(|err| {
+        format!(
             "Failed to delete cache subdir {:?}: {}",
-            output_path,
+            root_output_path,
             err.to_string(),
         )
-    )?;
+    })?;
 
     return Ok(result);
 }

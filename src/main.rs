@@ -1,4 +1,4 @@
-const DESTINATION: &str = "~/Downloads";
+const DESTINATION: &str = "/home/irving_wash/Downloads";
 
 fn main() -> Result<(), String> {
     let result = git_dir::download_folder_from_github_repo_url(
@@ -10,9 +10,8 @@ fn main() -> Result<(), String> {
         Err(e) => return Err(format!("Failed: {}", e)),
         Ok(r) => {
             println!(
-                "Successfully downloaded to {}/{}.zip",
-                r.destination,
-                r.archive_name,
+                "Successfully downloaded to {:?}/{}.zip",
+                r.destination, r.archive_name,
             );
 
             if r.warnings.len() > 0 {
@@ -22,7 +21,7 @@ fn main() -> Result<(), String> {
                     println!("{}", warning);
                 }
             }
-        },
+        }
     }
     return Ok(());
 }
