@@ -5,6 +5,15 @@ use url::Url;
 const DOMAIN: &str = "github.com";
 const BASE_URL: &str = "https://api.github.com";
 
+#[allow(dead_code)]
+pub struct RepositoryContentWithRepoMetaInfo {
+    pub contents: objects::RepositoryContent,
+    pub owner: String,
+    pub repo: String,
+    pub in_repo_path: String,
+    pub branch: Option<String>,
+}
+
 pub struct ApiClient {
     client: reqwest::blocking::Client,
 }
@@ -36,19 +45,19 @@ impl ApiClient {
     pub fn get_repository_content_from_url(
         &self,
         url: &str,
-    ) -> Result<objects::RepositoryContent, String> {
-        let deconstructed_url = DeconstructedUrl::new(url)?;
+    ) -> Result<RepositoryContentWithRepoMetaInfo, String> {
+        let repo_meta_info = RepoMetaInfo::from_url(url)?;
 
         if let (Some(owner), Some(repo), Some(in_repo_path)) = (
-            &deconstructed_url.owner,
-            &deconstructed_url.repo,
-            &deconstructed_url.in_repo_path,
+            repo_meta_info.owner,
+            repo_meta_info.repo,
+            repo_meta_info.in_repo_path,
         ) {
             return self.get_repository_content(
                 owner,
                 repo,
                 in_repo_path,
-                deconstructed_url.branch.as_deref(),
+                repo_meta_info.branch,
             );
         }
 
@@ -60,15 +69,22 @@ impl ApiClient {
 
     pub fn get_repository_content(
         &self,
-        owner: &str,
-        repo: &str,
-        in_repo_path: &str,
-        branch: Option<&str>,
-    ) -> Result<objects::RepositoryContent, String> {
+        owner: String,
+        repo: String,
+        in_repo_path: String,
+        branch: Option<String>,
+    ) -> Result<RepositoryContentWithRepoMetaInfo, String> {
         let mut url =
-            Url::parse(format!("{BASE_URL}/repos/{owner}/{repo}/contents/{in_repo_path}").as_str())
+            Url::parse(
+                format!(
+                    "{BASE_URL}/repos/{}/{}/contents/{}",
+                    owner,
+                    repo,
+                    in_repo_path,
+                ).as_str(),
+            )
                 .map_err(|err| err.to_string())?;
-        if let Some(branch) = branch {
+        if let Some(branch) = &branch {
             url.set_query(Some(format!("ref={branch}").as_str()));
         }
 
@@ -84,19 +100,27 @@ impl ApiClient {
         let repository_content: objects::RepositoryContent =
             serde_json::from_str(json.as_str()).map_err(|err| err.to_string())?;
 
-        return Ok(repository_content);
+        return Ok(
+            RepositoryContentWithRepoMetaInfo{
+                contents: repository_content,
+                owner: owner,
+                repo: repo,
+                branch: branch,
+                in_repo_path: in_repo_path,
+            },
+        );
     }
 }
 
-struct DeconstructedUrl {
+struct RepoMetaInfo {
     owner: Option<String>,
     repo: Option<String>,
     branch: Option<String>,
     in_repo_path: Option<String>,
 }
 
-impl DeconstructedUrl {
-    pub fn new(url: &str) -> Result<Self, String> {
+impl RepoMetaInfo {
+    pub fn from_url(url: &str) -> Result<Self, String> {
         let url =
             Url::parse(url).map_err(|err| format!("Failed to parse the url {}: {}", url, err))?;
 
@@ -114,7 +138,7 @@ impl DeconstructedUrl {
             .map(|char| char.collect::<Vec<_>>())
             .ok_or(format!("Couldn't divide url {} into segments", url))?;
 
-        let deconstructed = DeconstructedUrl {
+        let repo_meta_info = Self {
             // This sucks, but idk
             owner: url_segments.get(0).map(|segment| segment.to_string()),
             repo: url_segments.get(1).map(|segment| segment.to_string()),
@@ -122,6 +146,6 @@ impl DeconstructedUrl {
             in_repo_path: url_segments.split_at_checked(4).map(|t| t.1.join("/")),
         };
 
-        return Ok(deconstructed);
+        return Ok(repo_meta_info);
     }
 }
