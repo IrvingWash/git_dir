@@ -2,11 +2,14 @@ mod github_api;
 
 use std::{
     fs::{self, File},
-    path::PathBuf,
+    io,
+    path::{Path, PathBuf},
 };
 
 use walkdir::WalkDir;
 use zip::write::ZipWriter;
+
+use crate::github_api::objects::RepositoryContentKind;
 
 #[derive(Debug, Default)]
 pub struct DownloadFolderResult {
@@ -46,66 +49,18 @@ pub fn download_folder_from_github_repo_url(
     let mut root_output_path = project_dirs.cache_dir().to_path_buf();
     root_output_path.push(&output_name);
 
-    fs::create_dir(&root_output_path).map_err(|e| {
-        format!(
-            "Failed to create cache output subdir ({:?}): {}",
-            root_output_path,
-            e.to_string(),
-        )
-    })?;
-
     let mut result = DownloadFolderResult {
         warnings: Vec::new(),
         destination: PathBuf::from(dst),
         archive_name: format!("{}.zip", output_name),
     };
 
-    for content in repo_content.contents {
-        use github_api::objects::RepositoryContentKind;
-        match content {
-            RepositoryContentKind::Symlink(symlink) => {
-                result
-                    .warnings
-                    .push(format!("Skipping symlink: {}", symlink.name));
-            }
-            RepositoryContentKind::Submodule(submodule) => {
-                result
-                    .warnings
-                    .push(format!("Skipping submodule: {}", submodule.name));
-            }
-            RepositoryContentKind::Directory(dir) => {
-                println!("{:#?}", dir);
-            }
-            RepositoryContentKind::File(file) => match file.download_url {
-                None => result
-                    .warnings
-                    .push(format!("File {} doesn't have download url", file.path)),
-                Some(download_url) => {
-                    let download_result = reqwest::blocking::get(download_url);
-                    match download_result {
-                        Err(e) => result.warnings.push(format!(
-                            "Failed to download file {}: {}",
-                            file.path,
-                            e.to_string()
-                        )),
-                        Ok(dr) => {
-                            let mut file_path = root_output_path.to_path_buf();
-                            file_path.push(file.name.clone());
-                            match dr.text() {
-                                Err(e) => result.warnings.push(format!(
-                                    "Downloaded corrupted file {}: {}",
-                                    file.name, e
-                                )),
-                                Ok(text) => fs::write(file_path, text).map_err(|e| {
-                                    format!("Failed to create file {}: {}", file.name, e,)
-                                })?,
-                            }
-                        }
-                    }
-                }
-            },
-        }
-    }
+    download_contents_recursive(
+        &github_client,
+        repo_content.contents,
+        &root_output_path,
+        &mut result.warnings,
+    )?;
 
     let mut zip_file_path = result.destination.to_path_buf();
     zip_file_path.push(&result.archive_name);
@@ -120,6 +75,66 @@ pub fn download_folder_from_github_repo_url(
     })?;
 
     return Ok(result);
+}
+
+fn download_contents_recursive(
+    github_api_client: &github_api::ApiClient,
+    contents: Vec<RepositoryContentKind>,
+    output_dir: &Path,
+    warnings: &mut Vec<String>,
+) -> Result<(), String> {
+    fs::create_dir(output_dir).map_err(|e| format!("Failed to create {output_dir:?}: {e}"))?;
+
+    for content in contents {
+        match content {
+            RepositoryContentKind::Directory(dir) => {
+                let sub_content =
+                    github_api_client.get_repository_content_from_url(&dir.html_url)?;
+
+                let nested_output_dir = output_dir.join(&dir.name);
+
+                download_contents_recursive(
+                    github_api_client,
+                    sub_content.contents,
+                    &nested_output_dir,
+                    warnings,
+                )?;
+            }
+            RepositoryContentKind::File(file) => {
+                let Some(download_url) = file.download_url else {
+                    warnings.push(format!("File {} doesn't have a download URL", file.path));
+                    continue;
+                };
+
+                let mut response = match reqwest::blocking::get(&download_url)
+                    .and_then(|response| response.error_for_status())
+                {
+                    Ok(response) => response,
+                    Err(e) => {
+                        warnings.push(format!("Failed to download {}: {}", file.path, e));
+                        continue;
+                    }
+                };
+
+                let file_path = output_dir.join(&file.name);
+
+                let mut output = File::create(&file_path)
+                    .map_err(|e| format!("Failed to create {file_path:?}: {e}"))?;
+
+                io::copy(&mut response, &mut output)
+                    .map_err(|e| format!("Failed to write {file_path:?}: {e}"))?;
+            }
+
+            RepositoryContentKind::Symlink(symlink) => {
+                warnings.push(format!("Skipping symlink: {}", symlink.name));
+            }
+            RepositoryContentKind::Submodule(submodule) => {
+                warnings.push(format!("Skipping submodule: {}", submodule.name));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn zip_it(destination: PathBuf, src_dir_path: &PathBuf) -> Result<(), String> {
