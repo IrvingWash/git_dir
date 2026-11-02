@@ -18,13 +18,13 @@ pub struct DownloadFolderResult {
     pub archive_name: String,
 }
 
-pub fn download_folder_from_github_repo_url(
+pub async fn download_folder_from_github_repo_url(
     url: &str,
     dst: &PathBuf,
 ) -> Result<DownloadFolderResult, String> {
     let github_client = github_api::ApiClient::new()?;
 
-    let repo_content = github_client.get_repository_content_from_url(url)?;
+    let repo_content = github_client.get_repository_content_from_url(url).await?;
 
     let project_dirs = directories::ProjectDirs::from("", "irving_wash", "git_dir")
         .ok_or("Failed to get OS info on your home directory")?;
@@ -34,7 +34,7 @@ pub fn download_folder_from_github_repo_url(
             format!(
                 "Failed to create cache dir ({:?}): {}",
                 project_dirs.cache_dir(),
-                err.to_string(),
+                err,
             )
         })?;
     }
@@ -60,7 +60,8 @@ pub fn download_folder_from_github_repo_url(
         repo_content.contents,
         &root_output_path,
         &mut result.warnings,
-    )?;
+    )
+    .await?;
 
     let mut zip_file_path = result.destination.to_path_buf();
     zip_file_path.push(&result.archive_name);
@@ -70,14 +71,14 @@ pub fn download_folder_from_github_repo_url(
         format!(
             "Failed to delete cache subdir {:?}: {}",
             root_output_path,
-            err.to_string(),
+            err,
         )
     })?;
 
     return Ok(result);
 }
 
-fn download_contents_recursive(
+async fn download_contents_recursive(
     github_api_client: &github_api::ApiClient,
     contents: Vec<RepositoryContentKind>,
     output_dir: &Path,
@@ -88,17 +89,19 @@ fn download_contents_recursive(
     for content in contents {
         match content {
             RepositoryContentKind::Directory(dir) => {
-                let sub_content =
-                    github_api_client.get_repository_content_from_url(&dir.html_url)?;
+                let sub_content = github_api_client
+                    .get_repository_content_from_url(&dir.html_url)
+                    .await?;
 
                 let nested_output_dir = output_dir.join(&dir.name);
 
-                download_contents_recursive(
+                Box::pin(download_contents_recursive(
                     github_api_client,
                     sub_content.contents,
                     &nested_output_dir,
                     warnings,
-                )?;
+                ))
+                .await?;
             }
             RepositoryContentKind::File(file) => {
                 let Some(download_url) = file.download_url else {
@@ -106,7 +109,8 @@ fn download_contents_recursive(
                     continue;
                 };
 
-                let mut response = match reqwest::blocking::get(&download_url)
+                let response = match reqwest::get(&download_url)
+                    .await
                     .and_then(|response| response.error_for_status())
                 {
                     Ok(response) => response,
@@ -121,7 +125,12 @@ fn download_contents_recursive(
                 let mut output = File::create(&file_path)
                     .map_err(|e| format!("Failed to create {file_path:?}: {e}"))?;
 
-                io::copy(&mut response, &mut output)
+                let bytes = response
+                    .bytes()
+                    .await
+                    .map_err(|e| format!("Failed to read response: {e}"))?;
+
+                io::copy(&mut bytes.as_ref(), &mut output)
                     .map_err(|e| format!("Failed to write {file_path:?}: {e}"))?;
             }
 
@@ -149,13 +158,13 @@ fn zip_it(destination: PathBuf, src_dir_path: &PathBuf) -> Result<(), String> {
             Ok(entry) => entry,
             Err(e) => {
                 return Err(
-                    format!("Error while traversing directory {src_dir_path:?}: {e}").into(),
+                    format!("Error while traversing directory {src_dir_path:?}: {e}"),
                 );
             }
         };
         let path = entry.path();
         let path_stripped = path
-            .strip_prefix(&src_dir_path)
+            .strip_prefix(src_dir_path)
             .map_err(|e| e.to_string())?;
         let path_as_string = path_stripped
             .to_str()

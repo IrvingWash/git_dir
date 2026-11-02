@@ -15,7 +15,7 @@ pub struct RepositoryContentWithRepoMetaInfo {
 }
 
 pub struct ApiClient {
-    client: reqwest::blocking::Client,
+    client: reqwest::Client,
 }
 
 impl ApiClient {
@@ -34,7 +34,7 @@ impl ApiClient {
             reqwest::header::HeaderValue::from_static("application/json"),
         );
 
-        let client = reqwest::blocking::Client::builder()
+        let client = reqwest::Client::builder()
             .default_headers(headers)
             .build()
             .map_err(|err| err.to_string())?;
@@ -42,7 +42,7 @@ impl ApiClient {
         return Ok(Self { client });
     }
 
-    pub fn get_repository_content_from_url(
+    pub async fn get_repository_content_from_url(
         &self,
         url: &str,
     ) -> Result<RepositoryContentWithRepoMetaInfo, String> {
@@ -53,7 +53,9 @@ impl ApiClient {
             repo_meta_info.repo,
             repo_meta_info.in_repo_path,
         ) {
-            return self.get_repository_content(owner, repo, in_repo_path, repo_meta_info.branch);
+            return self
+                .get_repository_content(owner, repo, in_repo_path, repo_meta_info.branch)
+                .await;
         }
 
         return Err(format!(
@@ -62,7 +64,7 @@ impl ApiClient {
         ));
     }
 
-    pub fn get_repository_content(
+    pub async fn get_repository_content(
         &self,
         owner: String,
         repo: String,
@@ -85,20 +87,21 @@ impl ApiClient {
             .client
             .get(url)
             .send()
+            .await
             .map_err(|err| err.to_string())?
             .error_for_status()
             .map_err(|err| err.to_string())?;
 
-        let json = result.text().map_err(|err| err.to_string())?;
+        let json = result.text().await.map_err(|err| err.to_string())?;
         let repository_content: objects::RepositoryContent =
             serde_json::from_str(json.as_str()).map_err(|err| err.to_string())?;
 
         return Ok(RepositoryContentWithRepoMetaInfo {
             contents: repository_content,
-            owner: owner,
-            repo: repo,
-            branch: branch,
-            in_repo_path: in_repo_path,
+            owner,
+            repo,
+            branch,
+            in_repo_path,
         });
     }
 }
