@@ -20,7 +20,7 @@ pub struct DownloadFolderResult {
 
 pub fn download_folder_from_github_repo_url(
     url: &str,
-    dst: &str,
+    dst: &PathBuf,
 ) -> Result<DownloadFolderResult, String> {
     let github_client = github_api::ApiClient::new()?;
 

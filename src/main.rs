@@ -1,10 +1,27 @@
-const DESTINATION: &str = "/home/irving_wash/Downloads";
+use clap::Parser;
+use directories;
+use std::path::PathBuf;
+
+#[derive(clap::Parser, Debug)]
+#[command(about, long_about = None)]
+struct Args {
+    #[arg(short, long)]
+    source: String,
+    #[arg(short, long)]
+    destination: String,
+}
 
 fn main() -> Result<(), String> {
-    let result = git_dir::download_folder_from_github_repo_url(
-        "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Fox",
-        DESTINATION,
-    );
+    let args = Args::parse();
+
+    let expanded_dst = expand_tilde(&args.destination).ok_or(
+        format!(
+            "Failed to expand desintation path ({})",
+            args.destination,
+        )
+    )?;
+
+    let result = git_dir::download_folder_from_github_repo_url(&args.source, &expanded_dst);
 
     match result {
         Err(e) => return Err(format!("Failed: {}", e)),
@@ -24,4 +41,16 @@ fn main() -> Result<(), String> {
         }
     }
     return Ok(());
+}
+
+fn expand_tilde(path: &str) -> Option<PathBuf> {
+    let base_dirs = directories::BaseDirs::new()?;
+
+    if path == "~" {
+        Some(base_dirs.home_dir().to_path_buf())
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        Some(base_dirs.home_dir().join(rest))
+    } else {
+        Some(PathBuf::from(path))
+    }
 }
