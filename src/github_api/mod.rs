@@ -53,12 +53,7 @@ impl ApiClient {
             repo_meta_info.repo,
             repo_meta_info.in_repo_path,
         ) {
-            return self.get_repository_content(
-                owner,
-                repo,
-                in_repo_path,
-                repo_meta_info.branch,
-            );
+            return self.get_repository_content(owner, repo, in_repo_path, repo_meta_info.branch);
         }
 
         return Err(format!(
@@ -74,16 +69,14 @@ impl ApiClient {
         in_repo_path: String,
         branch: Option<String>,
     ) -> Result<RepositoryContentWithRepoMetaInfo, String> {
-        let mut url =
-            Url::parse(
-                format!(
-                    "{BASE_URL}/repos/{}/{}/contents/{}",
-                    owner,
-                    repo,
-                    in_repo_path,
-                ).as_str(),
+        let mut url = Url::parse(
+            format!(
+                "{BASE_URL}/repos/{}/{}/contents/{}",
+                owner, repo, in_repo_path,
             )
-                .map_err(|err| err.to_string())?;
+            .as_str(),
+        )
+        .map_err(|err| err.to_string())?;
         if let Some(branch) = &branch {
             url.set_query(Some(format!("ref={branch}").as_str()));
         }
@@ -100,15 +93,13 @@ impl ApiClient {
         let repository_content: objects::RepositoryContent =
             serde_json::from_str(json.as_str()).map_err(|err| err.to_string())?;
 
-        return Ok(
-            RepositoryContentWithRepoMetaInfo{
-                contents: repository_content,
-                owner: owner,
-                repo: repo,
-                branch: branch,
-                in_repo_path: in_repo_path,
-            },
-        );
+        return Ok(RepositoryContentWithRepoMetaInfo {
+            contents: repository_content,
+            owner: owner,
+            repo: repo,
+            branch: branch,
+            in_repo_path: in_repo_path,
+        });
     }
 }
 

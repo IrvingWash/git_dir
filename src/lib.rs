@@ -8,27 +8,6 @@ use std::{
 use walkdir::WalkDir;
 use zip::write::ZipWriter;
 
-// RepositoryContentDirectory {
-//     size: 0,
-//     name: "glTF-Binary",
-//     path: "Models/Fox/glTF-Binary",
-//     content: None,
-//     sha: "bd109c78e710180d6b4e509bab9138ddc821d224",
-//     url: "https://api.github.com/repos/KhronosGroup/glTF-Sample-Assets/contents/Models/Fox/glTF-Binary?ref=main",
-//     git_url: "https://api.github.com/repos/KhronosGroup/glTF-Sample-Assets/git/trees/bd109c78e710180d6b4e509bab9138ddc821d224",
-//     html_url: "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Fox/glTF-Binary",
-//     download_url: None,
-//     _links: RepositoryContentLinks {
-//         git: Some(
-//             "https://api.github.com/repos/KhronosGroup/glTF-Sample-Assets/git/trees/bd109c78e710180d6b4e509bab9138ddc821d224",
-//         ),
-//         html: Some(
-//             "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Fox/glTF-Binary",
-//         ),
-//         _self: "https://api.github.com/repos/KhronosGroup/glTF-Sample-Assets/contents/Models/Fox/glTF-Binary?ref=main",
-//     },
-// }
-
 #[derive(Debug, Default)]
 pub struct DownloadFolderResult {
     pub warnings: Vec<String>,
@@ -130,24 +109,38 @@ pub fn download_folder_from_github_repo_url(
 
     let mut zip_file_path = result.destination.to_path_buf();
     zip_file_path.push(&result.archive_name);
-    let zip_file = File::create(&zip_file_path)
-        .map_err(|e| format!("Failed to create zip file ({:?}): {}", zip_file_path, e,))?;
+    zip_it(zip_file_path, &root_output_path)?;
+
+    fs::remove_dir_all(&root_output_path).map_err(|err| {
+        format!(
+            "Failed to delete cache subdir {:?}: {}",
+            root_output_path,
+            err.to_string(),
+        )
+    })?;
+
+    return Ok(result);
+}
+
+fn zip_it(destination: PathBuf, src_dir_path: &PathBuf) -> Result<(), String> {
+    let zip_file = File::create(&destination)
+        .map_err(|e| format!("Failed to create zip file ({:?}): {}", destination, e))?;
     let mut zip_writer = ZipWriter::new(zip_file);
     let zip_options = zip::write::SimpleFileOptions::default();
 
-    let walk_dir = WalkDir::new(&root_output_path);
+    let walk_dir = WalkDir::new(src_dir_path);
     for entry_result in walk_dir.into_iter() {
         let entry = match entry_result {
             Ok(entry) => entry,
             Err(e) => {
                 return Err(
-                    format!("Error while traversing directory {root_output_path:?}: {e}").into(),
+                    format!("Error while traversing directory {src_dir_path:?}: {e}").into(),
                 );
             }
         };
         let path = entry.path();
         let path_stripped = path
-            .strip_prefix(&root_output_path)
+            .strip_prefix(&src_dir_path)
             .map_err(|e| e.to_string())?;
         let path_as_string = path_stripped
             .to_str()
@@ -186,13 +179,5 @@ pub fn download_folder_from_github_repo_url(
         .finish()
         .map_err(|e| format!("Filed to create zip file: {}", e))?;
 
-    fs::remove_dir_all(&root_output_path).map_err(|err| {
-        format!(
-            "Failed to delete cache subdir {:?}: {}",
-            root_output_path,
-            err.to_string(),
-        )
-    })?;
-
-    return Ok(result);
+    return Ok(());
 }
