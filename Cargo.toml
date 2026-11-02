@@ -2,6 +2,13 @@
 name = "git_dir"
 version = "0.1.0"
 edition = "2024"
+description = "Repo directory downloader"
+exclude = [".github"]
+homepage = "https://github.com/IrvingWash/git_dir"
+repository = "https://github.com/IrvingWash/git_dir.git"
+readme = "README.md"
+license = "MIT"
+publish = true
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
